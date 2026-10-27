@@ -17,8 +17,8 @@ function render(){
  const chosen=D.taxa.filter(t=>state.taxons.includes(t.taxon_key));
  $('selections').innerHTML=chosen.length?chosen.map(t=>`<button data-remove="${t.taxon_key}">${escape(t.taxon)} <small>${escape(t.rank_code)}</small> ×</button>`).join(''):'ยังไม่ได้เลือกเชื้อเฉพาะ — ติ๊กหลายรายการเพื่อเปรียบเทียบ';
  $('selections').querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>toggleTaxon(b.dataset.remove));
- $('siteScope').textContent=state.siteFilter?'กรองข้อมูลจากจุด '+D.siteLabel.get(state.siteFilter)+' · '+samples.length+' ตัวอย่าง':'ข้อมูลทุกจุดตามประเทศ / ตัวอย่างที่เลือก';
- $('clearSite').disabled=!state.siteFilter;
+ $('siteScope').textContent=state.mapMode==='facility'?facilityScope():state.siteFilter?'กรองข้อมูลจากจุด '+D.siteLabel.get(state.siteFilter)+' · '+samples.length+' ตัวอย่าง':'ข้อมูลทุกจุดตามประเทศ / ตัวอย่างที่เลือก';
+ $('clearSite').disabled=state.mapMode==='facility'?!state.facility:!state.siteFilter;
  const allowed=new Set((chosen.length?chosen:activeTaxa).map(t=>t.taxon_key));
  const hitIds=new Set(D.taxonHit.filter(e=>allowed.has(e.taxon_key)&&keys.has(e.sample_key)).map(e=>e.hit_source_row));
  // With no taxon/WHO/name restriction, keep ALL sample hits, including unmatched species.
@@ -29,7 +29,7 @@ function render(){
  $('taxa').innerHTML=activeTaxa.slice(state.page*25,state.page*25+25).map(t=>`<tr class="${state.taxons.includes(t.taxon_key)?'selected':''}"><td><input type="checkbox" aria-label="เลือก ${escape(t.taxon)}" data-taxon="${t.taxon_key}" ${state.taxons.includes(t.taxon_key)?'checked':''}> <button class="taxon-button" data-taxon="${t.taxon_key}">${escape(t.taxon)}</button><small>${escape(t.rank_code)} · taxid ${escape(t.ncbi_taxid)}</small></td><td>${escape(t.risk||'ไม่พบ exact WHO match')}</td><td>${t.sampleCount}</td><td>${fmt(t.n)}</td><td>${fmt(t.min)}–${fmt(t.max)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">ไม่พบเชื้อที่ตรงตัวกรอง</td></tr>';
  $('taxa').querySelectorAll('[data-taxon]').forEach(b=>b.onclick=()=>toggleTaxon(b.dataset.taxon));
  const risks=d3.rollups((chosen.length?chosen:activeTaxa).filter(t=>t.risk),v=>new Set(v.map(t=>t.taxon)).size,t=>t.risk).sort((a,b)=>b[1]-a[1]);bar('riskChart',risks,'#aa3044');bar('drugChart',d3.rollups(evidence,v=>v.length,a=>a.drug).sort((a,b)=>b[1]-a[1]),'#218f8c');
- $('detailTitle').textContent=chosen.length?'เปรียบเทียบ '+chosen.length+' Taxa · Alignment และหลักฐาน':'Alignment และหลักฐาน FungAMR';
+ $('detailTitle').textContent=chosen.length?'หลักฐานอ้างอิงการดื้อยา · เปรียบเทียบ '+chosen.length+' Taxa':'หลักฐานอ้างอิงการดื้อยา';
  $('detailSummary').textContent=`${activeHits.length} hits · ${evidence.length} หลักฐานอ้างอิงไม่ซ้ำ · คลิกจำนวนหลักฐานเพื่อดู drug, MIC, score และ host ของแต่ละ hit`;
  $('hits').innerHTML=activeHits.map(h=>`<tr><td>${escape(h.sample_id)}<small>${escape(h.species)}</small></td><td>${escape(h.accession)}<small>${escape(h.gene)}</small></td><td>${escape(h.pident)}%<small>${escape(h.evalue)}</small></td><td>${escape(h.protein)}</td><td><button data-hit="${h.source_row}">${(D.edgesByHit.get(h.source_row)||[]).length} หลักฐาน</button></td></tr>`).join('')||'<tr><td colspan="5" class="empty">ไม่มี alignment ที่จับคู่ได้ในตัวอย่างและเชื้อที่เลือก</td></tr>';
  $('hits').querySelectorAll('[data-hit]').forEach(b=>b.onclick=()=>showEvidence(b.dataset.hit));$('evidence').replaceChildren();renderMap();
@@ -68,6 +68,53 @@ function setupExpansion(){
  document.addEventListener('keydown',e=>{if(e.key==='Escape')close();if(e.key==='Tab'&&expanded){const all=[...expanded.querySelectorAll('button:not(:disabled),input,a[href],select')].filter(el=>el.getClientRects().length);if(!all.length)return;const first=all[0],last=all.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
 }
 
+// v1.2: facility-centred spatial filtering, without new biological interpretation.
+Object.assign(state,{mapMode:'site',facility:''});
+function facilityPairs(){return state.facility?(D.distancesByFacility.get(state.facility)||[]).filter(d=>Number(d.distance_km)<=state.radius):[];}
+function facilityScope(){const f=D.facilityById.get(state.facility);return f?`${f.facility_name} · รัศมี ${state.radius} กม. · ${facilityPairs().length} จุด · ${pickedSamples().length} ตัวอย่าง`:'โหมดสถานพยาบาล · ค้นหาและเลือกสถานพยาบาลเพื่อเริ่มสำรวจ';}
+const sitePickedSamples=pickedSamples;
+pickedSamples=function(){if(state.mapMode!=='facility')return sitePickedSamples();const sites=new Set(facilityPairs().map(d=>d.site_key));const keys=new Set(D.sampleSites.filter(e=>sites.has(e.site_key)).map(e=>e.sample_key));return D.samples.filter(s=>keys.has(s.sample_key));};
+const siteRenderMap=renderMap;
+renderMap=function(){
+ if(state.mapMode!=='facility'){siteRenderMap();return;}
+ siteLayer.clearLayers();facilityLayer.clearLayers();radiusLayer.clearLayers();facilityMarkers.clear();
+ $('radiusText').textContent=state.radius+' กม.';
+ const f=D.facilityById.get(state.facility), pairs=facilityPairs().sort((a,b)=>Number(a.distance_km)-Number(b.distance_km));
+ $('facilitySelected').textContent=f?'ศูนย์กลาง: '+f.facility_name+' · '+f.facility_id:'';
+ if(!f){$('mapMessage').textContent='ค้นหาและเลือกสถานพยาบาลด้านบน จุดตัวอย่างและข้อมูลจะแสดงหลังเลือก';$('nearbyTitle').textContent='จุดเก็บตัวอย่างใกล้สถานพยาบาล';$('nearby').replaceChildren();return;}
+ L.circleMarker([f.latitude,f.longitude],{radius:10,color:'#075b58',weight:3,fillColor:'#39aaa0',fillOpacity:1}).bindPopup(`<b>${escape(f.facility_name)}</b><br>ศูนย์กลางการค้นหา · ${escape(f.facility_id)}`).addTo(facilityLayer);
+ L.circle([f.latitude,f.longitude],{radius:state.radius*1000,color:'#168b88',weight:2,fillOpacity:.08}).addTo(radiusLayer);
+ pairs.forEach(p=>{const s=D.sites.find(s=>s.site_key===p.site_key);L.circleMarker([s.latitude,s.longitude],{radius:8,color:'#fff',weight:2,fillColor:'#ba253e',fillOpacity:1}).bindPopup(`<b>${escape(D.siteLabel.get(s.site_key))}</b><br>${Number(p.distance_km).toFixed(2)} กม. จากสถานพยาบาล`).addTo(siteLayer);});
+ siteLayer.bringToFront();
+ $('mapMessage').textContent=pairs.length?`${pairs.length} จุดเก็บตัวอย่าง · ${pickedSamples().length} ตัวอย่างในรัศมี (ไม่ใช่ข้อมูลผู้ป่วยของสถานพยาบาล)`:'ไม่มีข้อมูลตัวอย่างในระยะที่เลือก — ไม่ได้แปลว่าไม่มีเชื้อหรือไม่มีการดื้อยา';
+ $('nearbyTitle').textContent=`จุดเก็บตัวอย่างในระยะ ${state.radius} กม. (${pairs.length} จุด)`;
+ $('nearby').innerHTML=pairs.map(p=>`<button data-near-site="${p.site_key}"><span>${escape(D.siteLabel.get(p.site_key))}</span><strong>${Number(p.distance_km).toFixed(1)} กม.</strong></button>`).join('')||'<p class="empty">ลองเพิ่มรัศมีหรือเลือกสถานพยาบาลอื่น</p>';
+ $('nearby').querySelectorAll('[data-near-site]').forEach(b=>b.onclick=()=>{const s=D.sites.find(s=>s.site_key===b.dataset.nearSite);map.setView([s.latitude,s.longitude],12);});
+};
+const siteFocus=focusSite;
+focusSite=function(key){if(state.mapMode==='facility')focusFacility();else siteFocus(key);};
+function focusFacility(){const f=D.facilityById.get(state.facility);if(f)map.fitBounds(L.latLng(f.latitude,f.longitude).toBounds(state.radius*2400),{maxZoom:13,padding:[20,20]});}
+function searchFacilities(query){const q=query.trim().normalize('NFC').toLocaleLowerCase();return q?D.facilities.filter(f=>(f.facility_name+' '+f.facility_id).normalize('NFC').toLocaleLowerCase().includes(q)):[];}
+function showFacilityResults(){const q=$('facilitySearch').value, matches=searchFacilities(q);$('facilitySearchStatus').textContent=!q.trim()?'ค้นหาจากสถานพยาบาลที่ผ่านการเตรียมข้อมูลในประเทศไทย '+fmt(D.facilities.length)+' แห่ง':matches.length?`พบ ${fmt(matches.length)} แห่ง · แสดง ${Math.min(matches.length,40)} รายการแรก กรุณาพิมพ์เพิ่มเพื่อเจาะจง`:'ไม่พบสถานพยาบาลที่ตรงคำค้น';$('facilityResults').innerHTML=matches.slice(0,40).map(f=>`<button data-select-facility="${f.facility_id}">${escape(f.facility_name)}<small>${escape(f.facility_id)} · ${Number(f.latitude).toFixed(4)}, ${Number(f.longitude).toFixed(4)}</small></button>`).join('');$('facilityResults').querySelectorAll('[data-select-facility]').forEach(b=>b.onclick=()=>selectFacility(b.dataset.selectFacility));}
+function selectFacility(id){if(!D.facilityById.has(id))return;state.mapMode='facility';state.facility=id;state.country='Thailand';state.sample='';state.siteFilter='';state.page=0;$('country').value='Thailand';syncSamples();syncMapControls();render();focusFacility();}
+function syncMapControls(){$('mapMode').value=state.mapMode;$('facilityControls').hidden=state.mapMode!=='facility';$('siteControl').hidden=state.mapMode==='facility';$('clearSite').textContent=state.mapMode==='facility'?'ยกเลิกเลือกสถานพยาบาล':'ยกเลิกกรองจุด';}
+function leaveFacilityMode(){state.mapMode='site';state.facility='';syncMapControls();}
+function setupFacilityMode(){D.distancesByFacility=group(D.distances,'facility_id');$('mapMode').onchange=()=>{state.mapMode=$('mapMode').value;state.siteFilter='';state.sample='';state.page=0;if(state.mapMode==='facility'){state.country='Thailand';$('country').value='Thailand';}syncSamples();syncMapControls();render();if(state.mapMode==='facility')focusFacility();};$('facilitySearch').oninput=showFacilityResults;syncMapControls();showFacilityResults();}
+
+
+// Searchable facility dropdown. Native list selection supports keyboard and touch.
+let pickerOpen=false;
+function setPickerOpen(open){pickerOpen=open;$('facilityDropdown').hidden=!open;$('facilitySearch').setAttribute('aria-expanded',String(open));$('facilityDropdownButton').setAttribute('aria-expanded',String(open));if(open)showFacilityResults();}
+searchFacilities=function(query){const q=query.trim().normalize('NFC').toLocaleLowerCase();return (D.sortedFacilities||D.facilities).filter(f=>!q||(f.facility_name+' '+f.facility_id).normalize('NFC').toLocaleLowerCase().includes(q));};
+showFacilityResults=function(){const matches=searchFacilities($('facilitySearch').value);$('facilitySearchStatus').textContent=matches.length?'พบ '+fmt(matches.length)+' แห่ง · เรียงตามชื่อ':'ไม่พบสถานพยาบาลที่ตรงคำค้น';const select=$('facilityOptions');select.replaceChildren();const frag=document.createDocumentFragment();matches.forEach(f=>frag.appendChild(new Option(f.facility_name+' — '+f.facility_id,f.facility_id)));select.appendChild(frag);select.selectedIndex=-1;};
+const pickerSelectFacility=selectFacility;
+selectFacility=function(id){pickerSelectFacility(id);const f=D.facilityById.get(id);if(f){$('facilitySearch').value=f.facility_name;setPickerOpen(false);$('facilitySearch').focus();}};
+const pickerSyncMap=syncMapControls;
+syncMapControls=function(){pickerSyncMap();$('modeSite').setAttribute('aria-pressed',String(state.mapMode==='site'));$('modeFacility').setAttribute('aria-pressed',String(state.mapMode==='facility'));if(state.mapMode==='site')setPickerOpen(false);};
+const pickerSetup=setupFacilityMode;
+setupFacilityMode=function(){D.sortedFacilities=[...D.facilities].sort((a,b)=>a.facility_name.localeCompare(b.facility_name,'th')||a.facility_id.localeCompare(b.facility_id,undefined,{numeric:true}));pickerSetup();$('modeSite').onclick=()=>switchPickerMode('site');$('modeFacility').onclick=()=>switchPickerMode('facility');$('facilitySearch').onfocus=()=>setPickerOpen(true);$('facilitySearch').oninput=()=>setPickerOpen(true);$('facilityDropdownButton').onclick=()=>{if(pickerOpen)setPickerOpen(false);else{$('facilitySearch').value='';setPickerOpen(true);}};$('facilityOptions').onclick=()=>{if($('facilityOptions').value)selectFacility($('facilityOptions').value);};$('facilityOptions').onkeydown=e=>{if(e.key==='Enter'&&$('facilityOptions').value){e.preventDefault();selectFacility($('facilityOptions').value);}if(e.key==='Escape'){setPickerOpen(false);$('facilityDropdownButton').focus();}};$('facilitySearch').onkeydown=e=>{if(e.key==='ArrowDown'){e.preventDefault();setPickerOpen(true);$('facilityOptions').focus();if($('facilityOptions').options.length)$('facilityOptions').selectedIndex=0;}if(e.key==='Escape')setPickerOpen(false);};document.addEventListener('pointerdown',e=>{if(!$('facilityPicker').contains(e.target))setPickerOpen(false);});$('facilityPicker').addEventListener('focusout',e=>{if(!$('facilityPicker').contains(e.relatedTarget))setPickerOpen(false);});};
+function switchPickerMode(mode){$('mapMode').value=mode;$('mapMode').onchange();}
+
 async function start(){
  D=await d3.json('data/dashboard.json');D.sampleIndex=new Map(D.samples.map((s,i)=>[s.sample_key,i]));D.sampleIdToKey=new Map(D.samples.map(s=>[s.sample_id,s.sample_key]));D.edgesByHit=group(D.hitAmr,'hit_source_row');D.distanceBySite=group(D.distances,'site_key');D.facilityById=new Map(D.facilities.map(f=>[f.facility_id,f]));
  const who=new Map(D.who.map(w=>[w.source_row,w.risk_group])), links=new Map(D.taxonWho.map(e=>[e.taxon_key,who.get(e.who_source_row)]));D.taxa.forEach(t=>t.risk=links.get(t.taxon_key)||'');D.siteLabel=new Map(D.sites.map(s=>[s.site_key,D.sampleSites.filter(e=>e.site_key===s.site_key).map(e=>D.samples.find(s=>s.sample_key===e.sample_key).sample_id).join(' / ')]));
@@ -75,12 +122,13 @@ async function start(){
  siteLayer=L.featureGroup().addTo(map);facilityLayer=L.layerGroup().addTo(map);radiusLayer=L.layerGroup().addTo(map);
  d3.json('data/thailand.geojson').then(g=>L.geoJSON(g,{interactive:false,style:{color:'#81919c',weight:1,fillOpacity:.025}}).addTo(map).bringToBack()).catch(()=>{});
  options('country',[...new Set(D.samples.map(s=>s.country))].map(c=>[c,c]),'ทุกประเทศ');$('country').value=state.country;syncSamples();options('risk',[...new Set(D.who.map(w=>w.risk_group))].map(r=>[r,r]),'ทุกกลุ่ม / รวม unmatched');
- $('country').onchange=()=>{state.country=$('country').value;state.siteFilter='';state.sample='';state.page=0;syncSamples();render();};$('sample').onchange=()=>{state.siteFilter='';state.sample=$('sample').value;state.page=0;render();if(state.site)focusSite(state.site);};$('risk').onchange=()=>{state.risk=$('risk').value;state.page=0;render();};$('search').oninput=()=>{state.search=$('search').value;state.page=0;render();};$('site').onchange=()=>selectSite($('site').value);$('radius').oninput=()=>{state.radius=+$('radius').value;renderMap();};$('radius').onchange=()=>focusSite(state.site);
- $('prev').onclick=()=>{state.page--;render();};$('next').onclick=()=>{state.page++;render();};$('clearTaxon').onclick=()=>{state.taxons=[];render();};$('fit').onclick=()=>{const ss=availableSites();if(ss.length)map.fitBounds(ss.map(s=>[s.latitude,s.longitude]),{padding:[40,40],maxZoom:11});};$('reset').onclick=()=>{Object.assign(state,{country:'Thailand',sample:'',risk:'',search:'',taxons:[],siteFilter:'',radius:20,page:0});$('country').value='Thailand';$('risk').value='';$('search').value='';$('radius').value=20;syncSamples();render();$('fit').click();};
- $('clearSite').onclick=()=>{state.siteFilter='';state.page=0;render();};
+ $('country').onchange=()=>{leaveFacilityMode();state.country=$('country').value;state.siteFilter='';state.sample='';state.page=0;syncSamples();render();};$('sample').onchange=()=>{leaveFacilityMode();state.siteFilter='';state.sample=$('sample').value;state.page=0;render();if(state.site)focusSite(state.site);};$('risk').onchange=()=>{state.risk=$('risk').value;state.page=0;render();};$('search').oninput=()=>{state.search=$('search').value;state.page=0;render();};$('site').onchange=()=>selectSite($('site').value);$('radius').oninput=()=>{state.radius=+$('radius').value;if(state.mapMode==='facility')render();else renderMap();};$('radius').onchange=()=>focusSite(state.site);
+ $('prev').onclick=()=>{state.page--;render();};$('next').onclick=()=>{state.page++;render();};$('clearTaxon').onclick=()=>{state.taxons=[];render();};$('fit').onclick=()=>{if(state.mapMode==='facility'){focusFacility();return;}const ss=availableSites();if(ss.length)map.fitBounds(ss.map(s=>[s.latitude,s.longitude]),{padding:[40,40],maxZoom:11});};$('reset').onclick=()=>{leaveFacilityMode();state.facility='';$('facilitySearch').value='';Object.assign(state,{country:'Thailand',sample:'',risk:'',search:'',taxons:[],siteFilter:'',radius:20,page:0});$('country').value='Thailand';$('risk').value='';$('search').value='';$('radius').value=20;syncSamples();render();$('fit').click();};
+ $('clearSite').onclick=()=>{if(state.mapMode==='facility'){state.facility='';}state.siteFilter='';state.page=0;render();};
+ setupFacilityMode();
  setupExpansion();
  render();$('status').textContent='';
- if(document.modelContext?.registerTool)Promise.resolve(document.modelContext.registerTool({name:'set_map_radius',description:'Set the visible map radius in kilometers around the selected sampling site.',inputSchema:{type:'object',properties:{radiusKm:{type:'number',minimum:1,maximum:100}},required:['radiusKm'],additionalProperties:false},execute:({radiusKm})=>{if(!Number.isFinite(radiusKm)||radiusKm<1||radiusKm>100)throw Error('Radius must be 1–100 km');state.radius=radiusKm;$('radius').value=radiusKm;focusSite(state.site);return {site:state.site,radiusKm};}})).catch(()=>{});
+ if(document.modelContext?.registerTool)Promise.resolve(document.modelContext.registerTool({name:'set_map_radius',description:'Set the visible map radius in kilometers around the selected sampling site.',inputSchema:{type:'object',properties:{radiusKm:{type:'number',minimum:1,maximum:100}},required:['radiusKm'],additionalProperties:false},execute:({radiusKm})=>{if(!Number.isFinite(radiusKm)||radiusKm<1||radiusKm>100)throw Error('Radius must be 1–100 km');state.radius=radiusKm;$('radius').value=radiusKm;if(state.mapMode==='facility')render();focusSite(state.site);return {site:state.site,radiusKm};}})).catch(()=>{});
 }
 start().catch(e=>{$('status').textContent='โหลดข้อมูลไม่สำเร็จ กรุณารีเฟรชหน้าเว็บ ('+e.message+')';console.error(e);});
 
