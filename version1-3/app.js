@@ -142,9 +142,20 @@ function setupPickers(){
  $('modeSite').onclick=()=>switchPickerMode('site');$('modeFacility').onclick=()=>switchPickerMode('facility');
  // A bounded button list avoids rebuilding 11,000 native options on every keypress.
  // No focusout-close: mobile keyboards and option taps can cause transient blur.
- $('facilitySearch').onfocus=()=>{facilityLimit=40;setPickerOpen(true);};
- $('facilitySearch').oninput=e=>{if(e.isComposing)return;facilityLimit=40;setPickerOpen(true);};
- $('facilitySearch').addEventListener('compositionend',()=>{facilityLimit=40;setPickerOpen(true);});
+ // Search provisional IME text too: mobile keyboards may compose an entire word.
+ // Avoid replacing option buttons on duplicate input/compositionend during a tap.
+ let lastFacilityQuery=null;
+ const refreshFacilitySearch=()=>{
+  const query=$('facilitySearch').value;
+  if(facilityOpen&&query===lastFacilityQuery)return;
+  lastFacilityQuery=query;facilityLimit=40;setPickerOpen(true);
+  $('facilityOptions').scrollTop=0;
+ };
+ $('facilitySearch').onfocus=refreshFacilitySearch;
+ $('facilitySearch').oninput=refreshFacilitySearch;
+ $('facilitySearch').addEventListener('compositionend',refreshFacilitySearch);
+ $('facilitySearch').addEventListener('change',refreshFacilitySearch);
+ $('facilitySearch').addEventListener('search',refreshFacilitySearch);
  $('facilityDropdownButton').onclick=()=>{if(facilityOpen)setPickerOpen(false);else{$('facilitySearch').value='';facilityLimit=40;setPickerOpen(true);}};
  $('moreFacilities').onclick=()=>{facilityLimit+=40;showFacilityResults();};$('closeFacilities').onclick=()=>{setPickerOpen(false);$('facilityDropdownButton').focus();};
  $('search').onfocus=()=>{taxonLimit=40;setTaxonOpen(true);};$('search').oninput=e=>{if(e.isComposing)return;state.search=$('search').value;state.page=0;taxonLimit=40;taxonOpen=true;$('taxonDropdown').hidden=false;$('search').setAttribute('aria-expanded','true');render();};
